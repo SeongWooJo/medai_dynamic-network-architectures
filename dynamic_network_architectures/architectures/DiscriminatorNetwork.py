@@ -5,6 +5,7 @@ from dynamic_network_architectures.building_blocks.helper import convert_conv_op
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
 from dynamic_network_architectures.building_blocks.residual import BasicBlockD, BottleneckD
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
+from dynamic_network_architectures.building_blocks.unet_decoder_classifier import UNetDecoderClassifier
 from dynamic_network_architectures.building_blocks.unet_decoder import UNetDecoder
 from dynamic_network_architectures.building_blocks.unet_residual_decoder import UNetResDecoder
 from dynamic_network_architectures.initialization.dann_weight_init import dann_InitWeights_He
@@ -14,7 +15,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
 
-class DANNConvUNet(nn.Module):
+class DiscriminatorNetwork(nn.Module):
     def __init__(self,
                  input_channels: int,
                  n_stages: int,
@@ -56,30 +57,16 @@ class DANNConvUNet(nn.Module):
                                         dropout_op_kwargs, nonlin, nonlin_kwargs, return_skips=True,
                                         nonlin_first=nonlin_first)
         
-        self.classifier = None
-        self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
+        self.classifier = UNetDecoderClassifier(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
                                    nonlin_first=nonlin_first)
+
 
     def forward(self, x):
         skips = self.encoder(x)
-        return self.decoder(skips), self.classifier(torch.flatten(skips[-1], start_dim=1))
+        return self.classifier(skips)
 
     def make_classifier(self, input_size, features_per_stage, num_domains):
-        skip_sizes = []
-        for s in range(len(self.encoder.strides)):
-            skip_sizes.append([i // j for i, j in zip(input_size, self.encoder.strides[s])])
-            input_size = skip_sizes[-1]
-        input_len = 1
-        for elem in input_size:
-            input_len = input_len * elem
-        input_len = input_len * features_per_stage[-1]
-        self.classifier = nn.Sequential(
-            nn.Linear(input_len, 512),
-            self.nonlin,
-            nn.Linear(512, 256),
-            self.nonlin,
-            nn.Linear(256, num_domains)
-        )
+        self.classifier.build_fc_layer(input_size, num_domains)
     
     
     def compute_conv_feature_map_size(self, input_size):

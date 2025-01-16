@@ -14,7 +14,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
 
-class DANNConvUNet(nn.Module):
+class DANN1ConvUNet(nn.Module):
     def __init__(self,
                  input_channels: int,
                  n_stages: int,
@@ -62,7 +62,7 @@ class DANNConvUNet(nn.Module):
 
     def forward(self, x):
         skips = self.encoder(x)
-        return self.decoder(skips), self.classifier(torch.flatten(skips[-1], start_dim=1))
+        return self.decoder(skips), self.classifier(skips[-1])
 
     def make_classifier(self, input_size, features_per_stage, num_domains):
         skip_sizes = []
@@ -72,11 +72,16 @@ class DANNConvUNet(nn.Module):
         input_len = 1
         for elem in input_size:
             input_len = input_len * elem
-        input_len = input_len * features_per_stage[-1]
+        input_len = input_len
         self.classifier = nn.Sequential(
-            nn.Linear(input_len, 512),
+            nn.Conv3d(in_channels=features_per_stage[-1], out_channels=32, kernel_size=1, bias=False),
             self.nonlin,
-            nn.Linear(512, 256),
+            nn.BatchNorm3d(32),
+            nn.Conv3d(in_channels=32, out_channels=1, kernel_size=1, bias=False),
+            self.nonlin,
+            nn.BatchNorm3d(1),
+            nn.Flatten(),
+            nn.Linear(input_len, 256),
             self.nonlin,
             nn.Linear(256, num_domains)
         )

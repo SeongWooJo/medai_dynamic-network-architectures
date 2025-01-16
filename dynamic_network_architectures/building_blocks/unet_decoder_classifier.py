@@ -10,8 +10,7 @@ from dynamic_network_architectures.building_blocks.helper import get_matching_co
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
 
-
-class UNetDecoder(nn.Module):
+class UNetDecoderClassifier(nn.Module):
     def __init__(self,
                  encoder: Union[PlainConvEncoder, ResidualEncoder],
                  num_classes: int,
@@ -24,8 +23,7 @@ class UNetDecoder(nn.Module):
                  dropout_op_kwargs: dict = None,
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
-                 conv_bias: bool = None,
-                 num_domains: int = None
+                 conv_bias: bool = None
                  ):
         """
         This class needs the skips of the encoder as input in its forward.
@@ -45,7 +43,7 @@ class UNetDecoder(nn.Module):
         super().__init__()
         self.deep_supervision = deep_supervision
         self.encoder = encoder
-        self.num_classes = num_classes
+        self.num_classes = 1
         n_stages_encoder = len(encoder.output_channels)
         if isinstance(n_conv_per_stage, int):
             n_conv_per_stage = [n_conv_per_stage] * (n_stages_encoder - 1)
@@ -92,9 +90,10 @@ class UNetDecoder(nn.Module):
             # we always build the deep supervision outputs so that we can always load parameters. If we don't do this
             # then a model trained with deep_supervision=True could not easily be loaded at inference time where
             # deep supervision is not needed. It's just a convenience thing
-            seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
+            #seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
+            seg_layers.append(encoder.conv_op(input_features_skip, 1, 1, 1, 0, bias=True))
         
-        self.num_domains = num_domains
+        self.nonlin = nonlin(**nonlin_kwargs)
         self.stages = nn.ModuleList(stages)
         self.transpconvs = nn.ModuleList(transpconvs)
         self.seg_layers = nn.ModuleList(seg_layers)
@@ -120,11 +119,62 @@ class UNetDecoder(nn.Module):
         # invert seg outputs so that the largest segmentation prediction is returned first
         seg_outputs = seg_outputs[::-1]
 
-        if not self.deep_supervision:
-            r = seg_outputs[0]
-        else:
-            r = seg_outputs
-        return r
+        x = seg_outputs[0]
+        for i, layer in enumerate(self.pool_layer):
+            x = layer(x)  # 각 레이어를 통과
+            # NaN 검사
+            if torch.isnan(x).any():
+                print(f"NaN detected after layer {i}: {layer}")
+
+
+        for i, layer in enumerate(self.fc_layer):
+            x = layer(x)  # 각 레이어를 통과
+            # NaN 검사
+            if torch.isnan(x).any():
+                print(f"NaN detected after layer {i}: {layer}")
+
+        return x
+        #r = self.fc_layer(seg_outputs[0])
+        
+        #return r
+
+    def build_fc_layer(self, input_size, num_domains):
+        input_len = 1
+        
+        """
+        for elem in input_size:
+            input_len = input_len * elem
+        """
+        # 수정된 LayerNorm 부분
+        reduced_input_sizes = [tuple(dim // i for dim in input_size) for i in [2, 4, 8, 16]]
+        for elem in reduced_input_sizes[-1]:
+            input_len = input_len * elem
+        input_len = input_len
+        
+        pool_set = []
+        pool_set = pool_set + [
+            nn.Conv3d(1, 1, kernel_size=2, stride=1,padding=1, bias=False),
+            nn.AvgPool3d(kernel_size=2, stride=2),  # 첫 번째 Pooling
+            self.nonlin,
+            nn.LayerNorm((1, *reduced_input_sizes[0]))
+        ]
+        for i in range(1, len(reduced_input_sizes)):
+            pool_set = pool_set + [
+                nn.Dropout(0.5),
+                nn.Conv3d(1, 1, kernel_size=2, stride=1,padding=1, bias=False),
+                nn.AvgPool3d(kernel_size=2, stride=2),
+                self.nonlin,
+                nn.LayerNorm((1, *reduced_input_sizes[i]))
+            ]
+
+        self.pool_layer = nn.Sequential(*pool_set)
+        
+        self.fc_layer = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(input_len, 256, bias=False),
+            self.nonlin,
+            nn.Linear(256, num_domains, bias=False),
+        )
 
     def compute_conv_feature_map_size(self, input_size):
         """
@@ -135,6 +185,8 @@ class UNetDecoder(nn.Module):
         # first we need to compute the skip sizes. Skip bottleneck because all output feature maps of our ops will at
         # least have the size of the skip above that (therefore -1)
         skip_sizes = []
+        
+        
         for s in range(len(self.encoder.strides) - 1):
             skip_sizes.append([i // j for i, j in zip(input_size, self.encoder.strides[s])])
             input_size = skip_sizes[-1]
