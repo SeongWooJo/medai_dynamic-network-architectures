@@ -45,17 +45,17 @@ class ConvDiscriminator(nn.Module):
                 kernel = kernel
             self.kernel_size.append(kernel)
 
-        def discriminator_block(in_filters, out_filters, kernel_size, stride, conv_bias, bn=True):
+        def discriminator_block(in_filters, out_filters, kernel_size, stride, conv_bias, normalized=True):
             paddings = [(i - 1) // 2 for i in kernel_size]
             block = [nn.Conv3d(in_channels=in_filters, out_channels=out_filters, kernel_size=kernel_size, stride=stride, padding=paddings, bias=conv_bias),\
                      nn.LeakyReLU(0.2, inplace=True), nn.Dropout3d(0.25)]
-            if bn:
-                block.append(nn.BatchNorm3d(out_filters, 0.8))
+            if normalized:
+                block.append(nn.InstanceNorm3d(out_filters, 0.8))
             return block
         
         dcgan_list = []
         for s in range(input_stage, n_stages):
-            block = discriminator_block(features_per_stage[s-1], features_per_stage[s], self.kernel_size[s-1], self.strides[s], conv_bias, bn=True)
+            block = discriminator_block(features_per_stage[s-1], features_per_stage[s], self.kernel_size[s-1], self.strides[s], conv_bias, normalized=True)
             dcgan_list.append(nn.Sequential(*block))
 
         self.pool_layer = nn.Sequential(*dcgan_list)
@@ -64,6 +64,9 @@ class ConvDiscriminator(nn.Module):
     def make_last_block(self, input_size, features_per_stage, num_domains):
         skip_len = 1
         skip_sizes = []
+        if self.input_stage > 1:
+            for s in range(0, self.input_stage):
+                input_size = [i // j for i, j in zip(input_size, self.strides[s])]
         for s in range(self.input_stage, len(self.strides)):
             skip_sizes.append([i // j for i, j in zip(input_size, self.strides[s])])
             input_size = skip_sizes[-1]

@@ -16,7 +16,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
 
-class DANNidenUNet(nn.Module):
+class idenDiscriminator(nn.Module):
     def __init__(self,
                  input_channels: int,
                  n_stages: int,
@@ -59,23 +59,16 @@ class DANNidenUNet(nn.Module):
                                         dropout_op_kwargs, nonlin, nonlin_kwargs, return_skips=True,
                                         nonlin_first=nonlin_first)
         
-        self.grl = GradientReversalLayer.apply
         self.classifier = ConvDiscriminator(n_stages=n_stages, input_stage=(self.input_stage + 1), features_per_stage=features_per_stage,\
             kernel_size=kernel_sizes, strides=strides, conv_bias=conv_bias)
-
-        self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
-                                   nonlin_first=nonlin_first)
-
+        
     def forward(self, x):
         skips = self.encoder(x)
         for idx, skip in enumerate(skips):
             if torch.isnan(skip).any():
                 print(f"{idx} skips have nan!")
                 print(skips[idx])
-        reversed_skips = []
-        for skip in skips:
-            reversed_skips.append(self.grl(skip))  # GRL 적용
-        return self.decoder(skips), self.classifier(reversed_skips[self.input_stage])
+        return self.classifier(skips[self.input_stage])
         #return self.classifier(skips[self.input_stage])
     
     def make_classifier(self, input_size, features_per_stage, num_domains):
