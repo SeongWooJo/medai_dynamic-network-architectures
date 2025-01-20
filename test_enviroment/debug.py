@@ -1,6 +1,19 @@
 import torch
 from torch import nn
-from dynamic_network_architectures.architectures.DANN_unet import DANNConvUNet
+from dynamic_network_architectures.architectures.DANN_iden_Discriminator import DANNidenUNet
+from batchgenerators.utilities.file_and_folder_operations import join, isfile, load_json
+from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
+
+preprocessed_dataset_folder = '/data/seongwoo/nnunetFrame/nnunet_preprocessed/Dataset301_Kits19All2'
+plans_identifier = 'DANNidenPlans'
+preprocessed_dataset_folder_base = preprocessed_dataset_folder
+plans_file = join(preprocessed_dataset_folder_base, plans_identifier + '.json')
+plans = load_json(plans_file)
+dataset_json = load_json(join(preprocessed_dataset_folder_base, 'dataset.json'))
+plans_manager = PlansManager(plans)
+label_manager = plans_manager.get_label_manager(dataset_json)
+configuration = '3d_fullres'
+configuration_manager = plans_manager.get_configuration(configuration)
 
 def test_cbam_unet():
     # Model parameters from 3d_fullres configuration
@@ -38,7 +51,7 @@ def test_cbam_unet():
     nonlin_first = False
 
     # Model instantiation
-    model = DANNConvUNet(
+    model = DANNidenUNet(
         input_channels,
         n_stages,
         features_per_stage,
@@ -58,7 +71,7 @@ def test_cbam_unet():
         deep_supervision,
         nonlin_first
     )
-    print("DANNConvUNet 모델 생성 성공!")
+    print("DANNidenUNet 모델 생성 성공!")
 
     # Testing input
     input_shape = (2, input_channels, 96, 160, 160)  # batch_size=2 from configuration
@@ -66,12 +79,11 @@ def test_cbam_unet():
 
     # Forward pass
     model.make_classifier((input_shape[2],input_shape[3],input_shape[4]), features_per_stage, 2)
-    output, domain_output = model(input_tensor)
+    output = model(input_tensor)
 
     # Output shape
     print(f"Input shape: {input_tensor.shape}")
     print(f"Output shape: {output.shape}")
-    print(f"Output shape: {domain_output.shape}")
 
 if __name__ == "__main__":
     test_cbam_unet()
