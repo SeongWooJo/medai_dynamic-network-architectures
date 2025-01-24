@@ -40,9 +40,11 @@ class ConvDiscriminator(nn.Module):
         self.kernel_size = []
         for kernel in kernel_size:
             if isinstance(kernel, int):
-                kernel = [kernel] * 3
+                #kernel = [kernel] * 3
+                kernel = [5] * 3
             else:
-                kernel = kernel
+                kernel = [5,5,5]
+                #kernel = kernel
             self.kernel_size.append(kernel)
 
         def discriminator_block(in_filters, out_filters, kernel_size, stride, conv_bias, normalized=True):
@@ -60,6 +62,7 @@ class ConvDiscriminator(nn.Module):
 
         self.pool_layer = nn.Sequential(*dcgan_list)
         self.adv_layer = None
+        self.first_layer = None
 
     def make_last_block(self, input_size, features_per_stage, num_domains):
         skip_len = 1
@@ -75,6 +78,8 @@ class ConvDiscriminator(nn.Module):
         self.adv_layer = nn.Sequential(nn.Linear(features_per_stage[-1] * skip_len, num_domains))
 
     def forward(self, input):
+        if self.first_layer is not None:
+            input = self.first_layer(input)
         pool_output = self.pool_layer(input)
         flatten_output = torch.flatten(pool_output, start_dim=1)
         #print(flatten_output.shape)
