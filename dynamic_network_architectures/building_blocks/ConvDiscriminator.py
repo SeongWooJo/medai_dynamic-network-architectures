@@ -41,9 +41,9 @@ class ConvDiscriminator(nn.Module):
         for kernel in kernel_size:
             if isinstance(kernel, int):
                 #kernel = [kernel] * 3
-                kernel = [5] * 3
+                kernel = [3] * 3
             else:
-                kernel = [5,5,5]
+                kernel = [3,3,3]
                 #kernel = kernel
             self.kernel_size.append(kernel)
 
@@ -75,7 +75,11 @@ class ConvDiscriminator(nn.Module):
             input_size = skip_sizes[-1]
         for elem in input_size:
             skip_len *= elem
-        self.adv_layer = nn.Sequential(nn.Linear(features_per_stage[-1] * skip_len, num_domains))
+        self.adv_layer = nn.Sequential(
+            nn.Linear(features_per_stage[-1] * skip_len, 256),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(256, num_domains)
+        )
 
     def forward(self, input):
         if self.first_layer is not None:

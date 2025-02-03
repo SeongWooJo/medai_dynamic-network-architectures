@@ -3,12 +3,6 @@ from typing import Union, Type, List, Tuple
 import torch
 from dynamic_network_architectures.building_blocks.helper import convert_conv_op_to_dim
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
-from dynamic_network_architectures.building_blocks.residual import BasicBlockD, BottleneckD
-from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
-from dynamic_network_architectures.building_blocks.unet_decoder_classifier2 import UNetDecoderClassifier2
-from dynamic_network_architectures.building_blocks.reversalblock import GradientReversalLayer
-from dynamic_network_architectures.building_blocks.unet_decoder import UNetDecoder
-from dynamic_network_architectures.building_blocks.unet_residual_decoder import UNetResDecoder
 from dynamic_network_architectures.initialization.dann_weight_init import dann_InitWeights_He
 from dynamic_network_architectures.initialization.weight_init import init_last_bn_before_add_to_0
 from torch import nn
@@ -16,7 +10,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
 
-class DANNClassUNet(nn.Module):
+class OnlyEncoderNet(nn.Module):
     def __init__(self,
                  input_channels: int,
                  n_stages: int,
@@ -58,12 +52,6 @@ class DANNClassUNet(nn.Module):
                                         dropout_op_kwargs, nonlin, nonlin_kwargs, return_skips=True,
                                         nonlin_first=nonlin_first)
         
-        self.grl = GradientReversalLayer.apply
-        self.classifier = UNetDecoderClassifier2(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
-                                   nonlin_first=nonlin_first)
-        self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
-                                   nonlin_first=nonlin_first)
-    
 
     def forward(self, x):
         skips = self.encoder(x)
@@ -71,24 +59,8 @@ class DANNClassUNet(nn.Module):
         for idx, skip in enumerate(skips):
             if torch.isnan(skip).any():
                 print(f"{idx} skips have nan!")
-        reversed_skips = []
-        if not self.grl is None:
-            for skip in skips:
-                reversed_skips.append(self.grl(skip))  # GRL 적용
-        else:
-            reversed_skips = skips
-        return self.decoder(skips), self.classifier(reversed_skips)
-
-    def make_classifier(self, input_size, features_per_stage, num_domains):
-        self.classifier.build_fc_layer(input_size, features_per_stage, num_domains)
-        #self.add_module("classifier", self.classifier)
-
-    def use_grl(self, use_grl_bool = True):
-        if use_grl_bool:
-            self.grl = GradientReversalLayer.apply
-        else:
-            self.grl = None
-    
+        
+        return skips
     
     def compute_conv_feature_map_size(self, input_size):
         assert len(input_size) == convert_conv_op_to_dim(self.encoder.conv_op), "just give the image size without color/feature channels or " \

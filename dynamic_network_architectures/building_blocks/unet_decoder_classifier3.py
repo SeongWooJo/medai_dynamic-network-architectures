@@ -150,11 +150,11 @@ class UNetDecoderClassifier3(nn.Module):
         self.pool_layer = nn.Sequential(*pool_set)
         # 수정된 LayerNorm 부분
         self.fc_layer = nn.Sequential(
-            nn.Conv3d(filter_set[-1], 1, kernel_size=1, stride=1,padding=0,bias=False),
+            nn.Conv3d(filter_set[-1], 1, kernel_size=3, stride=1,padding=1),
             self.nonlin,
             nn.LayerNorm((1, *reduced_input_sizes[-1])),
             nn.Flatten(),
-            nn.Linear(input_len, num_domains, bias=False),
+            nn.Linear(input_len, num_domains),
         )
 
     def compute_conv_feature_map_size(self, input_size):

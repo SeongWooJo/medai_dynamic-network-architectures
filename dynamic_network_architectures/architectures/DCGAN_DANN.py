@@ -5,10 +5,10 @@ from dynamic_network_architectures.building_blocks.helper import convert_conv_op
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
 from dynamic_network_architectures.building_blocks.residual import BasicBlockD, BottleneckD
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
-from dynamic_network_architectures.building_blocks.unet_decoder_classifier2 import UNetDecoderClassifier2
-from dynamic_network_architectures.building_blocks.reversalblock import GradientReversalLayer
 from dynamic_network_architectures.building_blocks.unet_decoder import UNetDecoder
 from dynamic_network_architectures.building_blocks.unet_residual_decoder import UNetResDecoder
+from dynamic_network_architectures.building_blocks.reversalblock import GradientReversalLayer
+from dynamic_network_architectures.building_blocks.ConvDiscriminator import ConvDiscriminator
 from dynamic_network_architectures.initialization.dann_weight_init import dann_InitWeights_He
 from dynamic_network_architectures.initialization.weight_init import init_last_bn_before_add_to_0
 from torch import nn
@@ -16,7 +16,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.dropout import _DropoutNd
 
 
-class DANNClassUNet(nn.Module):
+class DCGAN_DANN(nn.Module):
     def __init__(self,
                  input_channels: int,
                  n_stages: int,
@@ -35,7 +35,8 @@ class DANNClassUNet(nn.Module):
                  nonlin: Union[None, Type[torch.nn.Module]] = None,
                  nonlin_kwargs: dict = None,
                  deep_supervision: bool = False,
-                 nonlin_first: bool = False
+                 nonlin_first: bool = False,
+                 input_stage: int = 0,
                  ):
         """
         nonlin_first: if True you get conv -> nonlin -> norm. Else it's conv -> norm -> nonlin
@@ -52,42 +53,62 @@ class DANNClassUNet(nn.Module):
                                                                 f"as we have resolution stages. here: {n_stages} " \
                                                                 f"stages, so it should have {n_stages - 1} entries. " \
                                                                 f"n_conv_per_stage_decoder: {n_conv_per_stage_decoder}"
-        self.nonlin = nonlin(**nonlin_kwargs)
+        self.input_stage = input_stage
         self.encoder = PlainConvEncoder(input_channels, n_stages, features_per_stage, conv_op, kernel_sizes, strides,
                                         n_conv_per_stage, conv_bias, norm_op, norm_op_kwargs, dropout_op,
                                         dropout_op_kwargs, nonlin, nonlin_kwargs, return_skips=True,
                                         nonlin_first=nonlin_first)
         
+        self.classifier_list = []
+        for input in range(1, n_stages + 1):
+            self.classifier_list.append(ConvDiscriminator(n_stages=n_stages, input_stage=input, features_per_stage=features_per_stage,\
+            kernel_size=kernel_sizes, strides=strides, conv_bias=conv_bias))
+        
+        paddings = [(i - 1) // 2 for i in kernel_sizes[-1]]
+        base_filters = features_per_stage[-1]
+        
+        self.classifier_list[-2].first_layer = nn.Sequential(
+            nn.Conv3d(in_channels=base_filters, out_channels=base_filters, kernel_size=kernel_sizes[-1], stride=1, padding=paddings, bias=conv_bias),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Dropout3d(0.25),
+            nn.InstanceNorm3d(base_filters, 0.8),
+        )
+
+        self.classifier_list[-1].first_layer = nn.Sequential(
+            nn.Conv3d(in_channels=base_filters, out_channels=base_filters, kernel_size=kernel_sizes[-1], stride=1, padding=paddings, bias=conv_bias),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Dropout3d(0.25),
+            nn.InstanceNorm3d(base_filters, 0.8),
+            nn.Conv3d(in_channels=base_filters, out_channels=base_filters, kernel_size=kernel_sizes[-1], stride=1, padding=paddings, bias=conv_bias),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Dropout3d(0.25),
+            nn.InstanceNorm3d(base_filters, 0.8)
+        )
+        self.classifier = nn.ModuleList(self.classifier_list)
         self.grl = GradientReversalLayer.apply
-        self.classifier = UNetDecoderClassifier2(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
-                                   nonlin_first=nonlin_first)
         self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
                                    nonlin_first=nonlin_first)
-    
-
+        
+        
     def forward(self, x):
         skips = self.encoder(x)
-        
         for idx, skip in enumerate(skips):
             if torch.isnan(skip).any():
                 print(f"{idx} skips have nan!")
+                print(skips[idx])
+        result_list = []
         reversed_skips = []
-        if not self.grl is None:
-            for skip in skips:
-                reversed_skips.append(self.grl(skip))  # GRL 적용
-        else:
-            reversed_skips = skips
-        return self.decoder(skips), self.classifier(reversed_skips)
-
+        for skip in skips:
+            reversed_skips.append(self.grl(skip))  # GRL 적용
+        for idx, block in enumerate(self.classifier_list):
+            result_list.append(block(reversed_skips[idx]))
+            
+        return self.decoder(skips), result_list
+        #return self.classifier(skips[self.input_stage])
+    
     def make_classifier(self, input_size, features_per_stage, num_domains):
-        self.classifier.build_fc_layer(input_size, features_per_stage, num_domains)
-        #self.add_module("classifier", self.classifier)
-
-    def use_grl(self, use_grl_bool = True):
-        if use_grl_bool:
-            self.grl = GradientReversalLayer.apply
-        else:
-            self.grl = None
+        for block in self.classifier_list:
+            block.make_last_block(input_size, features_per_stage, num_domains)
     
     
     def compute_conv_feature_map_size(self, input_size):
