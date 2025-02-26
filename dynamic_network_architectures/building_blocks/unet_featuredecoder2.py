@@ -10,8 +10,7 @@ from dynamic_network_architectures.building_blocks.helper import get_matching_co
 from dynamic_network_architectures.building_blocks.residual_encoders import ResidualEncoder
 from dynamic_network_architectures.building_blocks.plain_conv_encoder import PlainConvEncoder
 
-
-class UNetFeatureDecoder(nn.Module):
+class UNetFeatureDecoder2(nn.Module):
     def __init__(self,
                  encoder: Union[PlainConvEncoder, ResidualEncoder],
                  num_classes: int,
@@ -99,6 +98,8 @@ class UNetFeatureDecoder(nn.Module):
         self.transpconvs = nn.ModuleList(transpconvs)
         self.seg_layers = nn.ModuleList(seg_layers)
 
+    
+
     def forward(self, skips):
         """
         we expect to get the skips in the order they were computed, so the bottleneck should be the last entry
@@ -108,13 +109,10 @@ class UNetFeatureDecoder(nn.Module):
         lres_input = skips[-1]
         seg_outputs = []
         target_feature_list = []
-        target_feature = None
         for s in range(len(self.stages)):
             x = self.transpconvs[s](lres_input)
             x = torch.cat((x, skips[-(s+2)]), 1)
             x = self.stages[s](x)
-            if s == (len(self.stages) - 1):
-                target_feature = x                
             if self.deep_supervision:
                 seg_outputs.append(self.seg_layers[s](x))
                 target_feature_list.append(x)
@@ -125,12 +123,15 @@ class UNetFeatureDecoder(nn.Module):
 
         # invert seg outputs so that the largest segmentation prediction is returned first
         seg_outputs = seg_outputs[::-1]
-        target_feature_list = target_feature_list[::-1] 
+        target_feature_list = target_feature_list[::-1]
+
         if not self.deep_supervision:
             r = seg_outputs[0]
+            fr = target_feature_list[0]
         else:
             r = seg_outputs
-        return r, target_feature_list
+            fr = target_feature_list
+        return r, fr
 
     def compute_conv_feature_map_size(self, input_size):
         """
